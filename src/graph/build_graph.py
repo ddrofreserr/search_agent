@@ -10,6 +10,8 @@ from src.graph.nodes import (
     node_compose_answer,
     node_format_interrupt,
     node_handle_format,
+    node_generate_report_answer,
+    node_save_report,
 )
 from src.graph.router import route_after_handle_approval, route_after_guard
 from src.rag.qdrant_sources import SOURCES
@@ -28,6 +30,9 @@ def build_graph():
 
     g.add_node("web_search", node_web_search)
     g.add_node("compose_answer", node_compose_answer)
+
+    g.add_node("generate_report_answer", node_generate_report_answer)
+    g.add_node("save_report", node_save_report)
 
     g.add_edge(START, "intent_guard")
 
@@ -49,7 +54,9 @@ def build_graph():
     g.add_edge("format", "handle_format")
     g.add_edge("handle_format", "select_source")
 
-    g.add_edge("web_search", "compose_answer")
+    g.add_edge("web_search", "generate_report_answer")
+    g.add_edge("generate_report_answer", "save_report")
+    g.add_edge("save_report", "compose_answer")
     g.add_edge("compose_answer", END)
 
     return g.compile()
@@ -77,6 +84,12 @@ def run_agent(user_query: str):
         "web_results": None,
         "guard_blocked": None,
         "final_answer": None,
+
+        "source_domain": None,
+
+        "report_answer": None,
+        "report_paths": None,
+        "report_basename": None,
     }
 
     while True:
@@ -85,6 +98,7 @@ def run_agent(user_query: str):
 
         if state.get("approved") and state.get("source_id") and not state.get("_approval_announced"):
             sid = state["source_id"]
+            state["source_domain"] = SOURCES[sid]["domain"]
             meta = SOURCES[sid]
             print(f"\n✔ Source confirmed: {sid} ({meta['domain']})")
             print("→ Searching now and will summarize.\n")

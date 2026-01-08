@@ -5,6 +5,8 @@ from src.graph.state import AgentState
 from src.rag.qdrant_sources import pick_source, SOURCES
 from src.graph.ollama import call_ollama
 
+from src.reports.generate_report import save_reports
+
 from src.web.tools import web_search_allowed, fetch_page_text, pick_short_quotes
 
 
@@ -184,16 +186,21 @@ def node_web_search(state: AgentState) -> Dict[str, Any]:
     return {"web_results": enriched}
 
 
-def node_compose_answer(state: AgentState) -> Dict[str, Any]:
+def node_generate_report_answer(state: AgentState) -> Dict[str, Any]:
     sid = state.get("source_id") or state.get("candidate_source_id") or "wikipedia"
     domain = SOURCES[sid]["domain"]
 
-    ack = (state.get("approved_answer") or "").strip()
     web_results = state.get("web_results") or []
 
     evidence = ""
     for i, r in enumerate(web_results, 1):
-        evidence += f"\nResult {i}:\nTitle: {r.get('title')}\nURL: {r.get('url')}\nSnippet: {r.get('snippet')}\nQuotes:\n"
+        evidence += (
+            f"\nResult {i}:\n"
+            f"Title: {r.get('title')}\n"
+            f"URL: {r.get('url')}\n"
+            f"Snippet: {r.get('snippet')}\n"
+            f"Quotes:\n"
+        )
         for q in (r.get("quotes") or []):
             evidence += f"- \"{q}\"\n"
 
@@ -215,8 +222,27 @@ Evidence (search results + extracted quotes):
 {evidence}
 """.strip()
 
-    final = call_ollama(prompt, model="qwen2.5:3b")
-    if ack:
-        final = ack + "\n\n" + final
+    text = call_ollama(prompt, model="qwen2.5:3b")
+    return {"report_answer": text}
 
-    return {"final_answer": final}
+
+def node_save_report(state: AgentState) -> Dict[str, Any]:
+    paths = save_reports(state)
+    return {
+        "report_paths": {"md": paths["md"], "html": paths["html"]},
+        "report_basename": paths["base"],
+    }
+
+
+def node_compose_answer(state: AgentState) -> Dict[str, Any]:
+    paths = state.get("report_paths") or {}
+    md_path = paths.get("md")
+    html_path = paths.get("html")
+
+    msg = "I wrote a report for your question."
+    if html_path:
+        msg += f"\nHTML: {html_path}"
+    if md_path:
+        msg += f"\nMD: {md_path}"
+
+    return {"final_answer": msg}

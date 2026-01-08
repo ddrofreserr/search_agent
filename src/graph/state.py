@@ -22,3 +22,9 @@ class AgentState(TypedDict):
 
     web_results: Optional[list]
     final_answer: Optional[str]
+    
+    source_domain: Optional[str]
+
+    report_answer: Optional[str]
+    report_paths: Optional[dict]
+    report_basename: Optional[str]
