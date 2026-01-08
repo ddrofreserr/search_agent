@@ -1,28 +1,24 @@
-
 from __future__ import annotations
-
 from typing import TypedDict, Optional
 
-# -----------------------------
-# STATE (память графа)
-# -----------------------------
+
 class AgentState(TypedDict):
-
     user_query: str
-
     guard_blocked: Optional[bool]
 
-    # То, что агент "предложил" как источник.
-    candidate_source_id: Optional[str]        # например "wikipedia"
-    candidate_source_reason: Optional[str]    # короткое объяснение "почему"
+    candidate_source_id: Optional[str]
+    candidate_source_reason: Optional[str]
     approval_question: Optional[str]
 
-    # Human-in-the-loop поля:
-    user_approval_raw: Optional[str]          # что ввёл человек (y / github / etc.)
-    approved: Optional[bool]                  # True/False (после обработки)
-    source_id: Optional[str]                  # подтверждённый источник (итог)
+    user_approval_raw: Optional[str]
+    approved: Optional[bool]
+    source_id: Optional[str]
+
+    user_format_pref: Optional[str]
+    source_query: Optional[str]
+
+    rejected_source_ids: Optional[list[str]]
+    need_format: Optional[bool]
 
     web_results: Optional[list]
-
-    # Текст ответа
     final_answer: Optional[str]

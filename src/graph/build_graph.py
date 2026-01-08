@@ -8,134 +8,108 @@ from src.graph.nodes import (
     node_handle_approval,
     node_web_search,
     node_compose_answer,
+    node_format_interrupt,
+    node_handle_format,
 )
 from src.graph.router import route_after_handle_approval, route_after_guard
-from src.rag.allowlist import ALLOWED_SOURCES
+from src.rag.qdrant_sources import SOURCES
 
 
-# -----------------------------------------------------------------------------
-# BUILD GRAPH: собираем "машину состояний"
-# -----------------------------------------------------------------------------
 def build_graph():
     g = StateGraph(AgentState)
 
-    # --- nodes
     g.add_node("intent_guard", node_intent_guard)
     g.add_node("select_source", node_select_source)
     g.add_node("approval", node_approval_interrupt)
     g.add_node("handle_approval", node_handle_approval)
+
+    g.add_node("format", node_format_interrupt)
+    g.add_node("handle_format", node_handle_format)
+
     g.add_node("web_search", node_web_search)
     g.add_node("compose_answer", node_compose_answer)
 
-    # --- edges
     g.add_edge(START, "intent_guard")
 
-    # intent guard: либо стоп, либо продолжаем
     g.add_conditional_edges(
         "intent_guard",
         route_after_guard,
         {"blocked": END, "ok": "select_source"},
     )
 
-    # выбор источника -> подтверждение -> обработка ответа
     g.add_edge("select_source", "approval")
     g.add_edge("approval", "handle_approval")
 
-    # после handle_approval:
-    # - если confirmed -> идём искать в интернете
-    # - если нет -> снова спрашиваем (loop)
     g.add_conditional_edges(
         "handle_approval",
         route_after_handle_approval,
-        {"approved": "web_search", "revise": "approval"},
+        {"approved": "web_search", "need_format": "format", "revise": "approval"},
     )
 
-    # поиск -> финальный ответ -> конец
+    g.add_edge("format", "handle_format")
+    g.add_edge("handle_format", "select_source")
+
     g.add_edge("web_search", "compose_answer")
     g.add_edge("compose_answer", END)
 
     return g.compile()
 
 
-
-# -----------------------------------------------------------------------------
-# RUNTIME LOOP: обработка interrupt (invoke -> ask user -> resume)
-# -----------------------------------------------------------------------------
-def run_agent_once(user_query: str):
-    """
-    Внешний runtime loop нужен, потому что interrupt требует "человека снаружи".
-
-    Что здесь происходит:
-    1) build_graph() -> получаем app
-    2) создаём initial state (минимальный)
-    3) запускаем app.invoke(state)
-    4) если граф вернул "__interrupt__", то:
-        - берём payload с вопросом
-        - печатаем вопрос
-        - читаем ввод пользователя (input)
-        - кладём его в state["user_approval_raw"]
-        - продолжаем цикл (снова invoke)
-    5) если interrupt нет — значит дошли до END, печатаем final_answer
-
-    Это "шлюз" между автоматикой графа и человеком.
-    """
+def run_agent(user_query: str):
     app = build_graph()
 
-    # Начальное состояние: все поля, которые ожидают узлы, должны существовать.
     state: AgentState = {
-    "user_query": user_query,
+        "user_query": user_query,
 
-    "candidate_source_id": None,
-    "candidate_source_reason": None,
-    "approval_question": None,
+        "candidate_source_id": None,
+        "candidate_source_reason": None,
+        "approval_question": None,
 
-    "user_approval_raw": None,
-    "approved": None,
-    "source_id": None,
+        "user_approval_raw": None,
+        "approved": None,
+        "source_id": None,
 
-    "web_results": None,
+        "user_format_pref": None,
+        "source_query": None,
+        "need_format": None,
+        "rejected_source_ids": [],
 
-    "guard_blocked": None,
-    "final_answer": None,
+        "web_results": None,
+        "guard_blocked": None,
+        "final_answer": None,
     }
-
 
     while True:
         out = app.invoke(state)
-
-        # сохраняем прогресс графа в state (важно и для interrupt, и для финала)
         state.update(out)
 
-        # Красивое сообщение после подтверждения (без LLM), печатаем ровно 1 раз
         if state.get("approved") and state.get("source_id") and not state.get("_approval_announced"):
             sid = state["source_id"]
-            meta = ALLOWED_SOURCES[sid]
+            meta = SOURCES[sid]
             print(f"\n✔ Source confirmed: {sid} ({meta['domain']})")
             print("→ Searching now and will summarize.\n")
             state["_approval_announced"] = True
 
-        # Если граф остановился на interrupt — он вернёт "__interrupt__"
         if "__interrupt__" in out:
-            payload = out["__interrupt__"][0]
-            data = payload.value if hasattr(payload, "value") else payload
+            intr = out["__interrupt__"]
 
-            print("\n" + data.get("question", "Confirm? (y/n or type another source_id)"))
-            state["user_approval_raw"] = input("> ").strip()
+            for payload in intr:
+                data = payload.value if hasattr(payload, "value") else payload
+                question = data.get("question", "Confirm? (y/n or type another source_id)")
+                print("\n" + question)
+
+                ans = ""
+                while not ans:
+                    ans = input("> ").strip()
+
+                state["user_approval_raw"] = ans
+
             continue
 
-        # Если interrupt нет, то граф дошёл до END
         print(state.get("final_answer"))
         return state
 
 
-# -----------------------------------------------------------------------------
-# CLI entrypoint: запуск из терминала
-# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Это просто удобный способ проверить, что агент:
-    # - читает user_query
-    # - предлагает источник
-    # - спрашивает подтверждение
-    # - после подтверждения отвечает через LLM
     q = input("User query> ").strip()
-    run_agent_once(q)
+    run_agent(q)
