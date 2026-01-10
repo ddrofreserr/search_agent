@@ -1,14 +1,17 @@
-import os
-from typing import Dict, Any, List, Tuple, Optional
+from __future__ import annotations
+
+from typing import Dict, List, Tuple, Optional
 
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
+from config import settings
 
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-COLLECTION = os.getenv("QDRANT_SOURCES_COLLECTION", "sources")
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+QDRANT_URL = settings.QDRANT_URL
+COLLECTION = settings.QDRANT_SOURCES_COLLECTION
+MODEL_NAME = settings.EMBEDDING_MODEL
 
 SOURCES: Dict[str, Dict[str, str]] = {
     "wikipedia": {
@@ -49,6 +52,7 @@ _BM25 = BM25Okapi(_BM25_DOCS)
 
 _client: Optional[QdrantClient] = None
 _model: Optional[SentenceTransformer] = None
+_warned_missing_collection: bool = False
 
 
 def _get_client() -> QdrantClient:
@@ -65,17 +69,47 @@ def _get_model() -> SentenceTransformer:
     return _model
 
 
-def _dense_search_scores(query: str) -> Dict[str, float]:
-    client = _get_client()
-    model = _get_model()
+def _has_collection(client: QdrantClient, name: str) -> bool:
+    try:
+        cols = client.get_collections().collections
+        return any(c.name == name for c in cols)
+    except Exception:
+        return False
 
+
+def _dense_search_scores(query: str) -> Dict[str, float]:
+    """
+    Dense search in Qdrant.
+
+    If Qdrant is down or collection is missing, return empty scores.
+    Then pick_source() will fall back to BM25.
+    """
+    global _warned_missing_collection
+
+    client = _get_client()
+
+    if not _has_collection(client, COLLECTION):
+        if not _warned_missing_collection:
+            print(
+                f"[qdrant] Missing collection '{COLLECTION}'. "
+                f"Run init to create it (e.g. python -m src.rag.init_sources). "
+                f"Falling back to BM25."
+            )
+            _warned_missing_collection = True
+        return {}
+
+    model = _get_model()
     qvec = model.encode([query], normalize_embeddings=True)[0].tolist()
-    hits = client.query_points(
-        collection_name=COLLECTION,
-        query=qvec,
-        limit=len(SOURCES),
-        with_payload=True,
-    ).points
+
+    try:
+        hits = client.query_points(
+            collection_name=COLLECTION,
+            query=qvec,
+            limit=len(SOURCES),
+            with_payload=True,
+        ).points
+    except Exception:
+        return {}
 
     out: Dict[str, float] = {}
     for h in hits:

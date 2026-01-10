@@ -4,8 +4,9 @@ import os
 import re
 from typing import Dict, Any, List
 
+from config import settings
 
-DEFAULT_REPORTS_DIR = os.getenv("REPORTS_DIR", "src/reports/reports")
+DEFAULT_REPORTS_DIR = settings.REPORTS_DIR
 
 
 def _slugify(s: str, max_len: int = 60) -> str:

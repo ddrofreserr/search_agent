@@ -9,28 +9,13 @@ from src.reports.generate_report import save_reports
 
 from src.web.tools import web_search_allowed, fetch_page_text, pick_short_quotes
 
+from config import settings, INTENT_GUARD_PROMPT, REPORT_ANSWER_PROMPT, FORMAT_QUESTION
+
 
 def node_intent_guard(state: AgentState) -> Dict[str, Any]:
-    prompt = f"""
-You are a gatekeeper for an information-retrieval agent.
+    prompt = INTENT_GUARD_PROMPT.format(user_query=state["user_query"])
 
-The agent is ONLY allowed to:
-- choose a source from an allowlist,
-- (after user approval) search that source on the web,
-- summarize findings.
-
-If the user request is clearly outside this scope (e.g., requests for illegal wrongdoing,
-harm, explicit hacking instructions, or unrelated tasks), refuse.
-
-Output STRICTLY:
-ALLOW: <yes|no>
-REASON: <short reason>
-
-User query:
-{state["user_query"]}
-""".strip()
-
-    text = call_ollama(prompt, model="qwen2.5:3b")
+    text = call_ollama(prompt, model=settings.OLLAMA_MODEL)
 
     allow = "yes"
     reason = "OK"
@@ -65,6 +50,7 @@ def node_select_source(state: AgentState) -> Dict[str, Any]:
         "approval_question": confirmation,
         "approved": None,
         "source_id": None,
+        "source_domain": domain,
         "final_answer": None,
         "need_format": None,
     }
@@ -87,7 +73,7 @@ def node_format_interrupt(state: AgentState) -> Any:
     if (state.get("user_format_pref") or "").strip():
         return {}
 
-    q = "Could you clarify the format? Examples: papers / code / discussion / short summary"
+    q = FORMAT_QUESTION
     return interrupt({"question": q})
 
 
@@ -170,11 +156,11 @@ def node_web_search(state: AgentState) -> Dict[str, Any]:
     domain = SOURCES[sid]["domain"]
     query = (state.get("source_query") or state["user_query"])
 
-    results = web_search_allowed(query, domain, max_results=5)
+    results = web_search_allowed(query, domain, max_results=settings.WEB_MAX_RESULTS)
 
     enriched = []
-    for r in results[:2]:
-        text = fetch_page_text(r["url"])
+    for r in results[:settings.ENRICH_TOP_K]:
+        text = fetch_page_text(r["url"], max_chars=settings.MAX_PAGE_CHARS)
         quotes = pick_short_quotes(text, max_quotes=2)
         enriched.append({
             "title": r["title"],
@@ -204,30 +190,20 @@ def node_generate_report_answer(state: AgentState) -> Dict[str, Any]:
         for q in (r.get("quotes") or []):
             evidence += f"- \"{q}\"\n"
 
-    prompt = f"""
-You are an information research assistant.
+    prompt = REPORT_ANSWER_PROMPT.format(
+        user_query=state["user_query"],
+        source_id=sid,
+        source_domain=domain,
+        evidence=evidence,
+    )
+    text = call_ollama(prompt, model=settings.OLLAMA_MODEL)
 
-Rules:
-- Write: "What I found:" and give 2–4 bullet points with key findings.
-- Include 1–2 short direct quotes (already provided) and cite the URL right after each quote.
-- End with a concise answer to the user's question ("Therefore...").
-
-User query:
-{state["user_query"]}
-
-Chosen source:
-{sid} ({domain})
-
-Evidence (search results + extracted quotes):
-{evidence}
-""".strip()
-
-    text = call_ollama(prompt, model="qwen2.5:3b")
+    text = call_ollama(prompt, model=settings.OLLAMA_MODEL)
     return {"report_answer": text}
 
 
 def node_save_report(state: AgentState) -> Dict[str, Any]:
-    paths = save_reports(state)
+    paths = save_reports(state, out_dir=settings.REPORTS_DIR)
     return {
         "report_paths": {"md": paths["md"], "html": paths["html"]},
         "report_basename": paths["base"],
