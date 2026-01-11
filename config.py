@@ -55,7 +55,8 @@ FORMAT_QUESTION = "Could you clarify the format? Examples: papers / code / discu
 # -----------------------------
 
 class Settings(BaseSettings):
-    # LLM (Ollama)
+    # Ollama LLM
+    OLLAMA_HOST: str = Field(default="http://localhost:11434", description="Ollama base URL")
     OLLAMA_MODEL: str = Field(default="qwen2.5:3b", description="Default Ollama model name")
 
     # Qdrant (RAG for source selection)

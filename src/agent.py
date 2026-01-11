@@ -7,15 +7,13 @@ from langgraph.graph import StateGraph, START, END
 from config import settings  # central config (model, paths, limits, etc.)
 from src.graph.state import AgentState
 from src.graph.router import route_after_handle_approval, route_after_guard
-from src.rag.qdrant_sources import SOURCES
+from src.rag.qdrant_sources import get_sources
 
 from src.graph.nodes import (
     node_intent_guard,
     node_select_source,
     node_approval_interrupt,
     node_handle_approval,
-    node_format_interrupt,
-    node_handle_format,
     node_web_search,
     node_generate_report_answer,
     node_save_report,           
@@ -24,13 +22,6 @@ from src.graph.nodes import (
 
 
 class SearchAgent:
-    """
-    Thin wrapper around existing functional nodes.
-    Responsibilities:
-    - build LangGraph
-    - provide run_cli() (interactive human-in-the-loop)
-    - provide run_once() (non-interactive, useful for API/tests)
-    """
 
     def build_graph(self):
         g = StateGraph(AgentState)
@@ -39,9 +30,6 @@ class SearchAgent:
         g.add_node("select_source", node_select_source)
         g.add_node("approval", node_approval_interrupt)
         g.add_node("handle_approval", node_handle_approval)
-
-        g.add_node("format", node_format_interrupt)
-        g.add_node("handle_format", node_handle_format)
 
         g.add_node("web_search", node_web_search)
         g.add_node("generate_report_answer", node_generate_report_answer)
@@ -59,14 +47,12 @@ class SearchAgent:
         g.add_edge("select_source", "approval")
         g.add_edge("approval", "handle_approval")
 
+        # Вариант A: только approved / revise
         g.add_conditional_edges(
             "handle_approval",
             route_after_handle_approval,
-            {"approved": "web_search", "need_format": "format", "revise": "approval"},
+            {"approved": "web_search", "revise": "select_source"},
         )
-
-        g.add_edge("format", "handle_format")
-        g.add_edge("handle_format", "select_source")
 
         g.add_edge("web_search", "generate_report_answer")
         g.add_edge("generate_report_answer", "save_report")
@@ -74,6 +60,7 @@ class SearchAgent:
         g.add_edge("compose_answer", END)
 
         return g.compile()
+
 
     def _initial_state(self, user_query: str) -> AgentState:
         # Keep this aligned with src/graph/state.py fields
@@ -118,8 +105,9 @@ class SearchAgent:
 
             if state.get("approved") and state.get("source_id") and not state.get("_approval_announced"):
                 sid = state["source_id"]
-                meta = SOURCES[sid]
-                print(f"\n✔ Source confirmed: {sid} ({meta['domain']})")
+                sources = get_sources()
+                meta = sources.get(sid, {})
+                print(f"\n✔ Source confirmed: {sid} ({meta.get('domain','')})")
                 print(f"→ Searching now and will generate a report in: {settings.REPORTS_DIR}\n")
                 state["_approval_announced"] = True
 

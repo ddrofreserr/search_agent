@@ -2,7 +2,7 @@ from typing import Dict, Any
 from langgraph.types import interrupt
 
 from src.graph.state import AgentState
-from src.rag.qdrant_sources import pick_source, SOURCES
+from src.rag.qdrant_sources import pick_source, get_sources
 from src.graph.ollama import call_ollama
 
 from src.reports.generate_report import save_reports
@@ -41,7 +41,9 @@ def node_select_source(state: AgentState) -> Dict[str, Any]:
 
     source_id, reason = pick_source(q, alpha=0.65, exclude=excluded)
 
-    domain = SOURCES[source_id]["domain"]
+    sources = get_sources()
+    domain = sources[source_id]["domain"]
+
     confirmation = f"Use {source_id} ({domain})? (y/n or type another source_id)"
 
     return {
@@ -63,7 +65,9 @@ def node_approval_interrupt(state: AgentState) -> Any:
     q = (state.get("approval_question") or "").strip()
     if not q:
         sid = state.get("candidate_source_id") or "wikipedia"
-        domain = SOURCES[sid]["domain"]
+        sources = get_sources()
+        domain = sources.get(sid, {}).get("domain", "")
+
         q = f"Use {sid} ({domain})? (y/n or type another source_id)"
 
     return interrupt({"question": q})
@@ -79,72 +83,48 @@ def node_format_interrupt(state: AgentState) -> Any:
 
 def node_handle_format(state: AgentState) -> Dict[str, Any]:
     raw = (state.get("user_approval_raw") or "").strip()
-    fmt = raw
+
     base = state["user_query"]
-    source_query = base if not fmt else f"{base}\nPreferred format: {fmt}"
+    source_query = f"{base}\nUser preference: {raw}" if raw else base
 
     return {
-        "user_format_pref": fmt,
+        "user_format_pref": raw,      
         "source_query": source_query,
         "user_approval_raw": None,
-        "need_format": None,
+        "need_format": None,     
     }
 
 
 def node_handle_approval(state: AgentState) -> Dict[str, Any]:
     raw = (state.get("user_approval_raw") or "").strip()
     if not raw:
-        return {
-            "user_approval_raw": None,
-            "approved": None,
-            "need_format": None,
-        }
+        return {"user_approval_raw": None, "approved": None}
+
+    sources = get_sources()
     candidate = state.get("candidate_source_id") or "wikipedia"
     low = raw.lower()
 
     if low in {"y", "yes", "да", "ok", "ага"}:
-        return {
-            "approved": True,
-            "source_id": candidate,
-            "user_approval_raw": None,
-            "need_format": None,
-        }
+        return {"approved": True, "source_id": candidate, "user_approval_raw": None}
 
-    if low in SOURCES:
-        return {
-            "approved": True,
-            "source_id": low,
-            "user_approval_raw": None,
-            "need_format": None,
-        }
-
-    if low in {"n", "no", "нет", "неа"}:
-        rejected = list(state.get("rejected_source_ids") or [])
-        if candidate not in rejected:
-            rejected.append(candidate)
-
-        return {
-            "approved": False,
-            "source_id": None,
-            "user_approval_raw": None,
-            "need_format": True,
-            "rejected_source_ids": rejected,
-            "approval_question": None,
-            "candidate_source_id": None,
-            "candidate_source_reason": None,
-        }
+    if low in sources:
+        return {"approved": True, "source_id": low, "user_approval_raw": None}
 
     rejected = list(state.get("rejected_source_ids") or [])
     if candidate not in rejected:
         rejected.append(candidate)
 
+    # "no" = просто отказ, любой другой текст = preference (но тоже отказ кандидата)
+    source_query = state.get("source_query") or state["user_query"]
+    if low not in {"n", "no", "нет", "неа"}:
+        source_query = f"{state['user_query']}\nUser preference: {raw}"
+
     return {
         "approved": False,
         "source_id": None,
         "user_approval_raw": None,
-        "need_format": True,
         "rejected_source_ids": rejected,
-        "user_format_pref": raw,
+        "source_query": source_query,
         "approval_question": None,
         "candidate_source_id": None,
         "candidate_source_reason": None,
@@ -153,7 +133,8 @@ def node_handle_approval(state: AgentState) -> Dict[str, Any]:
 
 def node_web_search(state: AgentState) -> Dict[str, Any]:
     sid = state.get("source_id") or state.get("candidate_source_id") or "wikipedia"
-    domain = SOURCES[sid]["domain"]
+    sources = get_sources()
+    domain = sources.get(sid, {}).get("domain", "")
     query = (state.get("source_query") or state["user_query"])
 
     results = web_search_allowed(query, domain, max_results=settings.WEB_MAX_RESULTS)
@@ -174,7 +155,8 @@ def node_web_search(state: AgentState) -> Dict[str, Any]:
 
 def node_generate_report_answer(state: AgentState) -> Dict[str, Any]:
     sid = state.get("source_id") or state.get("candidate_source_id") or "wikipedia"
-    domain = SOURCES[sid]["domain"]
+    sources = get_sources()
+    domain = sources.get(sid, {}).get("domain", "")
 
     web_results = state.get("web_results") or []
 
@@ -196,7 +178,6 @@ def node_generate_report_answer(state: AgentState) -> Dict[str, Any]:
         source_domain=domain,
         evidence=evidence,
     )
-    text = call_ollama(prompt, model=settings.OLLAMA_MODEL)
 
     text = call_ollama(prompt, model=settings.OLLAMA_MODEL)
     return {"report_answer": text}

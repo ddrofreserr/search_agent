@@ -108,7 +108,7 @@ def _render_page(
 
     base_form = """
     <div class="card">
-      <div class="muted">English queries only. This runs the original LangGraph pipeline with interrupts.</div>
+      <div class="muted">English queries only.</div>
       <form method="post" action="/run" style="margin-top:12px">
         <label><b>Query</b></label><br/>
         <textarea name="query" placeholder="Find papers about rotary positional embeddings..."></textarea>
