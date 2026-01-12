@@ -36,6 +36,8 @@ The original task behind this project was to build an agent that:
 ### ✅ Implemented
 
 * Agent orchestration using **LangGraph**
+* **FastAPI web interface** for interactive agent interaction
+* **Docker containerization** with docker-compose setup
 * Explicit **human-in-the-loop** approval
 * LLM-based source selection with replanning
 * **RAG-based hybrid retrieval** (dense + BM25) for source selection
@@ -70,26 +72,32 @@ All searches are strictly restricted to these domains.
 ## Project structure
 
 ```
-src/
-├── graph/
-│   ├── build_graph.py        # LangGraph assembly + runtime loop
-│   ├── nodes.py              # Agent nodes (LLM logic, tools, decisions)
-│   ├── router.py             # Conditional routing logic
-│   ├── state.py              # AgentState definition
-│   └── ollama.py             # Local LLM (Ollama) wrapper
+├── app.py                    # FastAPI web interface
+├── config.py                 # Central configuration (settings, prompts)
+├── Dockerfile                # Docker image definition
+├── docker-compose.yml        # Docker Compose setup (app + Qdrant)
+├── requirements.txt          # Python dependencies
 │
-├── rag/
-│   ├── qdrant_sources.py     # RAG-based source selection (dense + BM25)
-│   └── seed_sources_qdrant.py
-│
-├── web/
-│   └── tools.py              # Web search & page parsing utilities
-│
-├── reports/
-│   ├── generate_report.py    # Report rendering & file generation
-│   └── reports/              # Generated Markdown / HTML reports
-│
-requirements.txt
+├── src/
+│   ├── agent.py              # SearchAgent class (graph builder)
+│   │
+│   ├── graph/
+│   │   ├── build_graph.py   # LangGraph assembly + runtime loop
+│   │   ├── nodes.py         # Agent nodes (LLM logic, tools, decisions)
+│   │   ├── router.py        # Conditional routing logic
+│   │   ├── state.py         # AgentState definition
+│   │   └── ollama.py        # Local LLM (Ollama) wrapper
+│   │
+│   ├── rag/
+│   │   ├── qdrant_sources.py # RAG-based source selection (dense + BM25)
+│   │   └── init_sources.py  # Qdrant collection initialization
+│   │
+│   ├── web/
+│   │   └── tools.py         # Web search & page parsing utilities
+│   │
+│   └── reports/
+│       ├── generate_report.py # Report rendering & file generation
+│       └── reports/         # Generated Markdown / HTML reports
 ```
 
 ### Responsibilities by module
@@ -116,11 +124,20 @@ requirements.txt
 * **rag/qdrant_sources.py**
   Implements RAG-based hybrid retrieval for source selection.
 
+* **rag/init_sources.py**
+  Initializes Qdrant collection with seed sources (run once or via Docker).
+
 * **web/tools.py**
   Low-level web tools (search, fetch, text extraction).
 
 * **reports/generate_report.py**
   Deterministic generation of Markdown and HTML reports.
+
+* **app.py**
+  FastAPI web interface with session management and HTML UI.
+
+* **config.py**
+  Centralized configuration using pydantic-settings (Ollama, Qdrant, web search limits).
 
 ---
 
@@ -193,25 +210,66 @@ END
 
 ## How to run
 
-### 1. Install dependencies
+### Option 1: Docker (recommended)
 
+**Prerequisites:**
+- Docker and Docker Compose installed
+- Ollama installed and running on the host machine
+- Ollama model downloaded: `ollama pull qwen2.5:3b`
+
+**Steps:**
+
+1. Start Qdrant and initialize the sources collection:
+```bash
+docker-compose up init_sources
+```
+
+2. Start the application:
+```bash
+docker-compose up app
+```
+
+3. Open `http://localhost:8000` in your browser.
+
+**Notes:**
+- Qdrant data is persisted in a Docker volume (`qdrant_storage`)
+- Ollama must be running separately on the host (not in Docker)
+- The app connects to Ollama via `host.docker.internal:11434`
+
+### Option 2: Local development
+
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Install and start Ollama
-
+2. Install and start Ollama:
 ```bash
 ollama pull qwen2.5:3b
+# Keep Ollama running: ollama serve
 ```
 
-### 3. Run the agent
+3. Start Qdrant (via Docker or locally):
+```bash
+docker run -d -p 6333:6333 qdrant/qdrant:latest
+```
 
+4. Initialize Qdrant sources collection:
+```bash
+python -m src.rag.init_sources
+```
+
+5. Run the agent (CLI mode):
 ```bash
 python -m src.graph.build_graph
 ```
 
-You will be prompted for a query and asked to approve the suggested source.
+Or run the FastAPI web interface:
+```bash
+uvicorn app:app --reload
+```
+
+Then open `http://localhost:8000` in your browser.
 
 ---
 
@@ -293,6 +351,8 @@ It is not intended for production use without additional safeguards.
 ### ✅ Реализовано
 
 * Оркестрация агента с помощью **LangGraph**
+* **FastAPI веб-интерфейс** для интерактивной работы с агентом
+* **Docker контейнеризация** с настройкой через docker-compose
 * Явный **human-in-the-loop**
 * Выбор источника и перепланирование с помощью LLM
 * **RAG (dense + BM25) для выбора источника**
@@ -327,26 +387,32 @@ It is not intended for production use without additional safeguards.
 ## Структура проекта
 
 ```
-src/
-├── graph/
-│   ├── build_graph.py        # Сборка LangGraph и runtime
-│   ├── nodes.py              # Узлы агента
-│   ├── router.py             # Условные переходы
-│   ├── state.py              # AgentState
-│   └── ollama.py             # Обёртка над Ollama
+├── app.py                    # FastAPI веб-интерфейс
+├── config.py                 # Централизованная конфигурация (настройки, промпты)
+├── Dockerfile                # Определение Docker образа
+├── docker-compose.yml        # Настройка Docker Compose (app + Qdrant)
+├── requirements.txt          # Python зависимости
 │
-├── rag/
-│   ├── qdrant_sources.py     # RAG для выбора источников
-│   └── seed_sources_qdrant.py
-│
-├── web/
-│   └── tools.py              # Поиск и парсинг страниц
-│
-├── reports/
-│   ├── generate_report.py    # Генерация отчётов
-│   └── reports/              # Готовые HTML / Markdown
-│
-requirements.txt
+├── src/
+│   ├── agent.py              # Класс SearchAgent (сборка графа)
+│   │
+│   ├── graph/
+│   │   ├── build_graph.py    # Сборка LangGraph и runtime
+│   │   ├── nodes.py          # Узлы агента
+│   │   ├── router.py         # Условные переходы
+│   │   ├── state.py          # AgentState
+│   │   └── ollama.py         # Обёртка над Ollama
+│   │
+│   ├── rag/
+│   │   ├── qdrant_sources.py # RAG для выбора источников
+│   │   └── init_sources.py   # Инициализация коллекции Qdrant
+│   │
+│   ├── web/
+│   │   └── tools.py          # Поиск и парсинг страниц
+│   │
+│   └── reports/
+│       ├── generate_report.py # Генерация отчётов
+│       └── reports/          # Готовые HTML / Markdown
 ```
 
 ---
@@ -390,15 +456,77 @@ END
 
 ---
 
+## Как запустить
+
+### Вариант 1: Docker (рекомендуется)
+
+**Требования:**
+- Установлены Docker и Docker Compose
+- Ollama установлена и запущена на хосте
+- Модель Ollama скачана: `ollama pull qwen2.5:3b`
+
+**Шаги:**
+
+1. Запустите Qdrant и инициализируйте коллекцию источников:
+```bash
+docker-compose up init_sources
+```
+
+2. Запустите приложение:
+```bash
+docker-compose up app
+```
+
+3. Откройте `http://localhost:8000` в браузере.
+
+**Примечания:**
+- Данные Qdrant сохраняются в Docker volume (`qdrant_storage`)
+- Ollama должна быть запущена отдельно на хосте (не в Docker)
+- Приложение подключается к Ollama через `host.docker.internal:11434`
+
+### Вариант 2: Локальная разработка
+
+1. Установите зависимости:
+```bash
+pip install -r requirements.txt
+```
+
+2. Установите и запустите Ollama:
+```bash
+ollama pull qwen2.5:3b
+# Держите Ollama запущенной: ollama serve
+```
+
+3. Запустите Qdrant (через Docker или локально):
+```bash
+docker run -d -p 6333:6333 qdrant/qdrant:latest
+```
+
+4. Инициализируйте коллекцию источников Qdrant:
+```bash
+python -m src.rag.init_sources
+```
+
+5. Запустите агента (CLI режим):
+```bash
+python -m src.graph.build_graph
+```
+
+Или запустите FastAPI веб-интерфейс:
+```bash
+uvicorn app:app --reload
+```
+
+Затем откройте `http://localhost:8000` в браузере.
+
+---
+
 ## Примечания по использованию
 
 * Агент рассчитан **только на англоязычные запросы**
 * Все поисковые действия требуют подтверждения
 * Поиск всегда ограничен allowlist-источниками
 * Основной результат работы — **файлы отчёта**
-
-Отличная мысль — это как раз закрывает “осязаемость” проекта. Ниже даю **готовые абзацы**, **отдельно для EN и RU**, в стиле уже существующего README.
-Ты можешь вставить их **в раздел Usage notes / Примечания по использованию** или сразу после описания отчётов — они автономные.
 
 ---
 

@@ -9,6 +9,4 @@ def route_after_guard(state: AgentState) -> Literal["blocked", "ok"]:
 def route_after_handle_approval(state: AgentState) -> str:
     if state.get("approved") is True:
         return "approved"
-    if state.get("need_format") is True:
-        return "need_format"
     return "revise"
